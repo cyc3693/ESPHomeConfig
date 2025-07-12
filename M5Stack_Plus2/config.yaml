@@ -1,0 +1,325 @@
+substitutions:
+  devicename: m5stickc-plus2
+  upper_devicename: M5StickC PLUS2
+  friendly_name: "M5StickC BLE Gateway"
+
+esphome:
+  name: $devicename
+  platformio_options:
+    upload_speed: 115200
+    build_flags:
+    - "-DBOARD_HAS_PSRAM"
+    - "-mfix-esp32-psram-cache-issue"
+    # Boot Actions
+  on_boot:
+  # - priority: 800 # 高优先级先执行
+  #   then:
+  #   - output.turn_on: hold_pin # 激活电源维持
+  - priority: 600
+    then:
+    - light.turn_on:
+        id: display_bl
+        brightness: 70%
+    - delay: 2s
+    - display.page.show: page_main
+
+esp32:
+  board: m5stick-c
+  framework:
+    type: esp-idf # Use ESP-IDF for better BLE support
+    version: recommended
+
+wifi:
+  id: wifi_component
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+  ap:
+    ssid: $devicename Fallback Hotspot
+    password: !secret wifi_password
+
+captive_portal:
+
+psram:
+
+debug:
+  update_interval: 10s
+
+text_sensor:
+- platform: debug
+  device:
+    name: "Device Info"
+  reset_reason:
+    name: "Reset Reason"
+- platform: version
+  name: "${friendly_name} Version"
+  internal: true
+
+# Logger must be configured
+logger:
+  level: debug
+
+api:
+
+ota:
+  platform: esphome
+
+# Battery voltage measured through ADC1_CH2. PLUS2 has a voltage divider,
+# so reading needs to be multiplied by 2
+sensor:
+- platform: adc
+  pin: GPIO38
+  attenuation: 12db
+  update_interval: 60s
+  name: "Battery Voltage"
+  id: battery_voltage
+  filters:
+  - multiply: 2.0
+
+# Battery Percentage
+- platform: template
+  name: "${friendly_name} Battery %"
+  id: battery_level
+  unit_of_measurement: "%"
+  device_class: battery
+  update_interval: 60s
+  lambda: |-
+    float v = id(battery_voltage).state;
+    if (v > 4.0) return 100;
+    if (v > 3.6) return (v - 3.6) * 250;
+    if (v > 3.3) return (v - 3.3) * 233;
+    return 0;
+
+# MPU6886 6-axis IMU sensor
+- platform: mpu6886
+  i2c_id: bus_internal
+  address: 0x68
+  update_interval: 30s # Reduced frequency to save resources
+
+  temperature:
+    name: "${friendly_name} IMU Temperature"
+    id: imu_temperature
+
+# WiFi Signal
+- platform: wifi_signal
+  name: "${friendly_name} WiFi"
+  id: wifi_signal_sensor
+  update_interval: 60s # 5 minutes
+
+# Uptime
+- platform: uptime
+  id: uptime_sensor
+  update_interval: 60s
+  internal: true
+
+- platform: debug
+  free:
+    name: "Heap Free"
+  block:
+    name: "Heap Max Block"
+  loop_time:
+    name: "Loop Time"
+  psram:
+    name: "Free PSRAM"
+  cpu_frequency:
+    name: "CPU Frequency"
+
+binary_sensor:
+# Button A
+- platform: gpio
+  pin:
+    number: GPIO37
+    inverted: false
+  name: "${friendly_name} Button A"
+  id: button_a
+  filters:
+  - delayed_on: 50ms
+  on_press:
+  - display.page.show_next: display_main
+
+# Button B (Power)
+- platform: gpio
+  pin:
+    number: GPIO39
+    inverted: true
+  name: "${friendly_name} Button B"
+  id: button_b
+  on_click:
+  - min_length: 50ms
+    max_length: 500ms
+    then:
+    - light.toggle: display_bl
+  - min_length: 2s
+    max_length: 2.5s
+    then:
+    - button.press: restart_button
+
+esp32_ble_tracker:
+  scan_parameters:
+    # We currently use the defaults to ensure Bluetooth
+    # can co-exist with WiFi In the future we may be able to
+    # enable the built-in coexistence logic in ESP-IDF
+    active: true
+
+bluetooth_proxy:
+  active: true
+
+# I2C Bus Configuration
+i2c:
+- id: bus_internal
+  sda: GPIO21
+  scl: GPIO22
+  scan: True
+
+# SPI Bus Configuration
+spi:
+  clk_pin: GPIO13
+  mosi_pin: GPIO15
+
+# Buttons
+button:
+- platform: restart
+  name: "${friendly_name} Restart"
+  id: restart_button
+
+# Outputs
+output:
+# LED on GPIO19 (not GPIO10)
+- platform: ledc
+  pin: GPIO19
+  id: builtin_led
+
+# Buzzer
+- platform: ledc
+  pin: GPIO2
+  id: buzzer
+
+# Display Backlight
+- platform: ledc
+  pin: GPIO27
+  id: backlight
+
+# - platform: gpio
+#   pin: GPIO4
+#   id: hold_pin
+#   inverted: false # 必须设为高电平维持供电
+
+# Lights
+light:
+# Display Backlight Only
+- platform: monochromatic
+  output: backlight
+  name: "${friendly_name} Backlight"
+  id: display_bl
+  # default_transition_length: 250ms
+  # restore_mode: RESTORE_DEFAULT_ON
+
+  # Simple Font Configuration - ASCII only to save memory
+font:
+- file: "gfonts://Roboto"
+  id: font_small
+  size: 10
+  glyphs: " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~°"
+
+- file: "gfonts://Roboto"
+  id: font_medium
+  size: 14
+  glyphs: " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~°"
+
+# Colors
+color:
+- id: WHITE
+  red: 100%
+  green: 100%
+  blue: 100%
+
+- id: BLACK
+  red: 0%
+  green: 0%
+  blue: 0%
+
+- id: BLUE
+  red: 0%
+  green: 0%
+  blue: 100%
+
+# 时间同步
+time:
+- platform: sntp
+  id: sntp_time
+  timezone: "Asia/Shanghai"
+  servers:
+  - ntp.aliyun.com
+  - time.windows.com
+  - pool.ntp.org
+
+# Display Configuration - Simplified
+display:
+- platform: st7789v
+  id: display_main
+  model: TTGO TDisplay 135x240
+  cs_pin: GPIO5
+  dc_pin: GPIO14
+  reset_pin: GPIO12
+  rotation: 270
+  update_interval: 5s # Reduced update frequency
+  pages:
+  # Main Page
+  - id: page_main
+    lambda: |-
+      // Clear screen
+      it.fill(id(BLACK));
+
+      // Title
+      it.filled_rectangle(0, 0, 135, 16, id(BLUE));
+      it.print(67, 8, id(font_medium), id(WHITE), TextAlign::CENTER, "BLE Gateway");
+
+      // Battery
+      char bat_str[32];
+      snprintf(bat_str, sizeof(bat_str), "Bat: %.0f%% (%.2fV)", 
+               id(battery_level).state, id(battery_voltage).state);
+      it.print(5, 25, id(font_small), id(WHITE), TextAlign::LEFT, bat_str);
+
+      // Temperature
+      it.printf(5, 40, id(font_small), id(WHITE), TextAlign::LEFT, 
+                "Temp: %.1f", id(imu_temperature).state);
+
+      // WiFi Status
+      if (id(wifi_component).is_connected()) {
+        it.print(5, 55, id(font_small), id(WHITE), TextAlign::LEFT, "WiFi: Connected");
+        
+        // WiFi Signal
+        if (id(wifi_signal_sensor).has_state()) {
+          char wifi_str[32];
+          snprintf(wifi_str, sizeof(wifi_str), "WiFi: %.0f dBm", id(wifi_signal_sensor).state);
+          it.print(100, 55, id(font_small), id(WHITE), TextAlign::LEFT, wifi_str);
+      }
+
+        // Get IP safely
+        auto ip_addresses = id(wifi_component).get_ip_addresses();
+        if (!ip_addresses.empty() && ip_addresses[0].is_set()) {
+          char ip_str[32];
+          snprintf(ip_str, sizeof(ip_str), "IP: %s", ip_addresses[0].str().c_str());
+          it.print(5, 70, id(font_small), id(WHITE), TextAlign::LEFT, ip_str);
+        }
+
+      } else {
+        it.print(5, 55, id(font_small), id(WHITE), TextAlign::LEFT, "WiFi: Disconnected");
+      }
+
+      // Uptime
+      int up_seconds = id(uptime_sensor).state;
+      int up_days = up_seconds / 86400;
+      up_seconds %= 86400;
+      int up_hours = up_seconds / 3600;
+      up_seconds %= 3600;
+      int up_minutes = up_seconds / 60;
+
+      char uptime_str[32];
+      snprintf(uptime_str, sizeof(uptime_str), "Up: %dd %02d:%02d", 
+               up_days, up_hours, up_minutes);
+      it.print(5, 85, id(font_small), id(WHITE), TextAlign::LEFT, uptime_str);
+
+      // Instructions
+      it.print(5, 110, id(font_small), id(WHITE), TextAlign::LEFT, "A: Next page");
+      it.print(5, 125, id(font_small), id(WHITE), TextAlign::LEFT, "B: Backlight");
