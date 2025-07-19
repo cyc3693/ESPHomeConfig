@@ -10,7 +10,7 @@ esphome:
     build_flags:
     - "-DBOARD_HAS_PSRAM"
     - "-mfix-esp32-psram-cache-issue"
-    board_build.f_cpu: 80000000L
+
     # Boot Actions
   on_boot:
   # - priority: 800 # 高优先级先执行
@@ -29,6 +29,7 @@ esp32:
   framework:
     type: esp-idf # Use ESP-IDF for better BLE support
     version: recommended
+  cpu_frequency: 80MHz
 
 wifi:
   id: wifi_component
@@ -176,7 +177,7 @@ i2c:
   sda: GPIO21
   scl: GPIO22
   scan: False
-  frequency: 100kHz
+  # frequency: 100kHz
 
 # SPI Bus Configuration
 spi:
