@@ -1,0 +1,109 @@
+esphome:
+  name: battery-charger
+  platform: ESP8266  # 或者 ESP32，根据您的具体硬件调整
+  board: nodemcuv2    # 根据您的开发板型号调整
+
+wifi:
+  ssid: "Your_WiFi_SSID"
+  password: "Your_WiFi_Password"
+  
+  # 启用回退热点（当WiFi连接失败时）
+  ap:
+    ssid: "Battery-Charger Fallback Hotspot"
+    password: "12345678"
+
+captive_portal:
+
+# 启用日志
+logger:
+
+# 启用Home Assistant API
+api:
+  password: "your_api_password"
+
+ota:
+  password: "your_ota_password"
+
+# 电池电压监测传感器
+sensor:
+  - platform: adc
+    pin: A0  # ESP8266的模拟输入引脚，ESP32可以使用GPIO36等
+    name: "Battery Voltage"
+    id: battery_voltage
+    update_interval: 1s  # 每秒更新一次
+    unit_of_measurement: "V"
+    accuracy_decimals: 2
+    filters:
+      # 电压分压器校准，假设使用分压电路
+      # 如果直接连接电池，可能需要调整这个倍数
+      - multiply: 4.2  # 根据您的分压电路调整
+      # 滑动平均滤波器，减少噪声
+      - sliding_window_moving_average:
+          window_size: 10
+          send_every: 1
+
+# 充电控制输出引脚
+switch:
+  - platform: gpio
+    pin: 
+      number: D1  # ESP8266的D1引脚，ESP32可以使用GPIO2等
+      mode: OUTPUT
+    name: "Charging Control"
+    id: charging_control
+    # 默认关闭充电
+    restore_mode: ALWAYS_OFF
+
+# 电池状态指示灯（可选）
+binary_sensor:
+  - platform: template
+    name: "Battery Charging"
+    id: battery_charging_status
+    lambda: |-
+      return id(charging_control).state;
+
+# 电池电压状态指示（可选）
+text_sensor:
+  - platform: template
+    name: "Battery Status"
+    id: battery_status
+    lambda: |-
+      float voltage = id(battery_voltage).state;
+      if (voltage > 4.0) {
+        return {"Fully Charged"};
+      } else if (voltage > 3.7) {
+        return {"Charging"};
+      } else {
+        return {"Low Battery"};
+      }
+
+# 自动化脚本：充电控制逻辑
+script:
+  - id: charge_control_script
+    then:
+      - lambda: |-
+          float voltage = id(battery_voltage).state;
+          bool charging = id(charging_control).state;
+          
+          // 如果电压高于4.0V且当前正在充电，停止充电
+          if (voltage > 4.0 && charging) {
+            ESP_LOGI("battery", "Battery voltage %.2fV > 4.0V, stopping charge", voltage);
+            id(charging_control).turn_off();
+          }
+          // 如果电压低于3.7V且当前未充电，开始充电
+          else if (voltage < 3.7 && !charging) {
+            ESP_LOGI("battery", "Battery voltage %.2fV < 3.7V, starting charge", voltage);
+            id(charging_control).turn_on();
+          }
+
+# 定时器：每5秒检查一次电池状态
+interval:
+  - interval: 5s
+    then:
+      - script.execute: charge_control_script
+
+# 启动时执行充电控制检查
+on_boot:
+  priority: -100
+  then:
+    - delay: 2s  # 等待传感器稳定
+    - script.execute: charge_control_script

@@ -1,0 +1,232 @@
+esphome:
+  name: advanced-battery-charger
+  platform: ESP8266  # 或 ESP32
+  board: nodemcuv2
+
+wifi:
+  ssid: "Your_WiFi_SSID"
+  password: "Your_WiFi_Password"
+  
+  ap:
+    ssid: "Advanced Battery Charger"
+    password: "12345678"
+
+captive_portal:
+logger:
+api:
+  password: "your_api_password"
+ota:
+  password: "your_ota_password"
+
+# 全局变量
+globals:
+  - id: charging_start_time
+    type: unsigned long
+    restore_value: no
+    initial_value: '0'
+  - id: max_charging_time
+    type: unsigned long
+    restore_value: yes
+    initial_value: '14400000'  # 4小时 (毫秒)
+
+# 传感器配置
+sensor:
+  # 电池电压监测
+  - platform: adc
+    pin: A0
+    name: "Battery Voltage"
+    id: battery_voltage
+    update_interval: 2s
+    unit_of_measurement: "V"
+    accuracy_decimals: 3
+    filters:
+      - multiply: 4.2  # 分压系数
+      - sliding_window_moving_average:
+          window_size: 5
+          send_every: 1
+
+  # 充电时长监测
+  - platform: template
+    name: "Charging Duration"
+    id: charging_duration
+    unit_of_measurement: "min"
+    accuracy_decimals: 1
+    lambda: |-
+      if (id(charging_control).state && id(charging_start_time) > 0) {
+        return (millis() - id(charging_start_time)) / 60000.0;
+      }
+      return 0;
+
+  # WiFi信号强度
+  - platform: wifi_signal
+    name: "WiFi Signal"
+    update_interval: 60s
+
+  # 系统运行时间
+  - platform: uptime
+    name: "Uptime"
+
+# 二进制传感器
+binary_sensor:
+  # 充电状态指示
+  - platform: template
+    name: "Battery Charging"
+    id: battery_charging_status
+    lambda: |-
+      return id(charging_control).state;
+
+  # 电池电压异常检测
+  - platform: template
+    name: "Battery Voltage Alert"
+    id: voltage_alert
+    lambda: |-
+      float voltage = id(battery_voltage).state;
+      return (voltage > 4.3 || voltage < 2.5);  # 异常电压范围
+
+# 开关控制
+switch:
+  # 充电控制开关
+  - platform: gpio
+    pin: 
+      number: D1
+      mode: OUTPUT
+    name: "Charging Control"
+    id: charging_control
+    restore_mode: ALWAYS_OFF
+    on_turn_on:
+      - lambda: |-
+          id(charging_start_time) = millis();
+          ESP_LOGI("charger", "Charging started");
+    on_turn_off:
+      - lambda: |-
+          id(charging_start_time) = 0;
+          ESP_LOGI("charger", "Charging stopped");
+
+  # 手动模式开关
+  - platform: template
+    name: "Manual Mode"
+    id: manual_mode
+    optimistic: true
+    restore_state: true
+
+# 文本传感器
+text_sensor:
+  # 电池状态
+  - platform: template
+    name: "Battery Status"
+    id: battery_status
+    lambda: |-
+      float voltage = id(battery_voltage).state;
+      bool charging = id(charging_control).state;
+      
+      if (voltage > 4.2) {
+        return {"Overcharged - ALERT!"};
+      } else if (voltage > 4.0) {
+        return charging ? "Full - Stopping Charge" : "Fully Charged";
+      } else if (voltage > 3.7) {
+        return charging ? "Charging" : "Good";
+      } else if (voltage > 3.0) {
+        return charging ? "Low - Charging" : "Low Battery";
+      } else if (voltage > 2.5) {
+        return {"Critical - Need Charge"};
+      } else {
+        return {"DANGER - Very Low Voltage!"};
+      }
+
+  # 充电系统状态
+  - platform: template
+    name: "System Status"
+    lambda: |-
+      if (id(manual_mode).state) {
+        return {"Manual Mode"};
+      } else if (id(voltage_alert).state) {
+        return {"Voltage Alert!"};
+      } else {
+        return {"Auto Mode - Normal"};
+      }
+
+# 脚本定义
+script:
+  # 主要充电控制逻辑
+  - id: smart_charge_control
+    then:
+      - lambda: |-
+          float voltage = id(battery_voltage).state;
+          bool charging = id(charging_control).state;
+          bool manual = id(manual_mode).state;
+          unsigned long current_time = millis();
+          
+          // 安全检查 - 电压异常时立即停止充电
+          if (voltage > 4.3 || voltage < 2.5) {
+            if (charging) {
+              ESP_LOGW("charger", "SAFETY: Voltage %.3fV out of safe range, stopping charge", voltage);
+              id(charging_control).turn_off();
+            }
+            return;
+          }
+          
+          // 手动模式下不自动控制
+          if (manual) {
+            return;
+          }
+          
+          // 充电时间保护 - 超过最大充电时间自动停止
+          if (charging && id(charging_start_time) > 0) {
+            if ((current_time - id(charging_start_time)) > id(max_charging_time)) {
+              ESP_LOGW("charger", "Max charging time reached, stopping charge");
+              id(charging_control).turn_off();
+              return;
+            }
+          }
+          
+          // 主要充电逻辑
+          if (voltage >= 4.05 && charging) {
+            // 电压达到4.05V，停止充电（留一点余量）
+            ESP_LOGI("charger", "Battery voltage %.3fV >= 4.05V, stopping charge", voltage);
+            id(charging_control).turn_off();
+          } 
+          else if (voltage <= 3.65 && !charging) {
+            // 电压降到3.65V，开始充电（避免频繁开关）
+            ESP_LOGI("charger", "Battery voltage %.3fV <= 3.65V, starting charge", voltage);
+            id(charging_control).turn_on();
+          }
+
+  # 系统健康检查
+  - id: system_health_check
+    then:
+      - lambda: |-
+          float voltage = id(battery_voltage).state;
+          
+          // 检查传感器是否正常工作
+          if (isnan(voltage) || voltage <= 0) {
+            ESP_LOGE("charger", "Voltage sensor error, stopping charge for safety");
+            id(charging_control).turn_off();
+          }
+
+# 定时任务
+interval:
+  # 主充电控制检查 - 每3秒
+  - interval: 3s
+    then:
+      - script.execute: smart_charge_control
+
+  # 系统健康检查 - 每30秒
+  - interval: 30s
+    then:
+      - script.execute: system_health_check
+
+# 启动时初始化
+on_boot:
+  priority: -100
+  then:
+    - delay: 3s  # 等待传感器稳定
+    - lambda: |-
+        ESP_LOGI("charger", "Advanced battery charger system started");
+        ESP_LOGI("charger", "Safety thresholds: Stop=4.05V, Start=3.65V");
+        ESP_LOGI("charger", "Max charging time: %.1f hours", id(max_charging_time) / 3600000.0);
+    - script.execute: smart_charge_control
+
+# 当WiFi连接时发送状态
+on_wifi_connect:
+  - lambda: |-
+      ESP_LOGI("charger", "WiFi connected, system ready for remote monitoring");
