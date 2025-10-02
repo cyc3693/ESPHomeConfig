@@ -10,7 +10,7 @@ esphome:
     build_flags:
     - "-DBOARD_HAS_PSRAM"
     - "-mfix-esp32-psram-cache-issue"
-
+    # board_build.f_cpu: 80000000L
     # Boot Actions
   on_boot:
   # - priority: 800 # 高优先级先执行
@@ -28,7 +28,8 @@ esp32:
   board: m5stick-c
   framework:
     type: esp-idf # Use ESP-IDF for better BLE support
-    version: recommended
+    # 只能用5.4.1，用更高版本会让机器无线重启
+    version: 5.4.1
   cpu_frequency: 80MHz
 
 wifi:
