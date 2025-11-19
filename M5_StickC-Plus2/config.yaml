@@ -28,8 +28,7 @@ esp32:
   board: m5stick-c
   framework:
     type: esp-idf # Use ESP-IDF for better BLE support
-    # 只能用5.4.1，用更高版本会让机器无线重启
-    version: 5.4.1
+    version: recommended
   cpu_frequency: 80MHz
 
 wifi:
