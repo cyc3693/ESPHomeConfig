@@ -314,7 +314,7 @@ display:
         // Get IP safely
         auto ip_addresses = id(wifi_component).get_ip_addresses();
         if (!ip_addresses.empty() && ip_addresses[0].is_set()) {
-          char ip_buf[IP_ADDRESS_BUFFER_SIZE];
+          char ip_buf[esphome::network::IP_ADDRESS_BUFFER_SIZE];
           ip_addresses[0].str_to(ip_buf);
           char ip_str[32];
           snprintf(ip_str, sizeof(ip_str), "IP: %s", ip_buf);
