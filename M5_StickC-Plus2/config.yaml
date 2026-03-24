@@ -29,7 +29,7 @@ esp32:
   framework:
     type: esp-idf # Use ESP-IDF for better BLE support
     version: recommended
-  cpu_frequency: 80MHz
+  cpu_frequency: 160MHz
 
 wifi:
   id: wifi_component
