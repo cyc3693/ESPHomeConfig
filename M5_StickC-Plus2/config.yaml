@@ -58,6 +58,24 @@ text_sensor:
 - platform: version
   name: "${friendly_name} Version"
   internal: true
+- platform: wifi_info
+  ip_address:
+    name: "${friendly_name} IP Address"
+- platform: template
+  name: "${friendly_name} Uptime"
+  id: uptime_formatted
+  update_interval: 60s
+  lambda: |-
+    int seconds = (int)id(uptime_sensor).state;
+    int days = seconds / 86400;
+    seconds %= 86400;
+    int hours = seconds / 3600;
+    seconds %= 3600;
+    int minutes = seconds / 60;
+    seconds %= 60;
+    char buffer[32];
+    snprintf(buffer, sizeof(buffer), "%dd%02dh%02dm%02ds", days, hours, minutes, seconds);
+    return {buffer};
 
 # Logger must be configured
 logger:
